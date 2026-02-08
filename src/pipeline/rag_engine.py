@@ -1,7 +1,6 @@
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_community.graphs import Neo4jGraph
-from langchain_community.chains.graph_qa.cypher import GraphCypherQAChain 
+from langchain_neo4j import Neo4jGraph, GraphCypherQAChain
 from langchain_core.prompts import PromptTemplate
 from dotenv import load_dotenv
 
@@ -14,6 +13,7 @@ class LoreReasoner:
             username = os.getenv("NEO4J_USERNAME"),
             password = os.getenv("NEO4J_PASSWORD")
         )
+
         self.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
 
         self.cypher_generation_template = """
