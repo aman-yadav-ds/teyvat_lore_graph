@@ -15,9 +15,9 @@ class LoreReasoner:
             password=os.getenv("NEO4J_PASSWORD")
         )
 
-        self.llm = ChatGroq(
-            model="llama-3.3-70b-versatile",
-            temperature=0,
+        self.llm = ChatOllama(
+            model="qwen2.5:7b",
+            temperature=0.3,
             
         )
 
@@ -30,17 +30,30 @@ class LoreReasoner:
         {schema}
         
         Instructions:
-        1. Use only the provided relationship types and properties in the schema.
-        2. Do not use any other relationship types or properties that are not provided.
-        3. **Fuzzy Search**: Use `CONTAINS` or `(?i)` for names.
+        1. **Membership Discovery**: If the question asks "Who are..." or "List the members of..." a group:
+           - First, find the group node.
+           - Then, return all entities connected to it.
+           - Example: MATCH (group:Entity)-[r]-(member:Entity) 
+                      WHERE group.name =~ '(?i).*Eight.*Adepts.*' 
+                      RETURN member.name, type(r)
+        2. **Fuzzy Search**: Use `CONTAINS` or `(?i)` for names.
            - Example: MATCH (n:Entity) WHERE n.name =~ '(?i).*Abyss.*' RETURN n
-        4. **Wildcard Relations**: If the verb is vague (like "affect"), use undirected relationships.
-           - Example: MATCH (a:Entity {{name: 'Abyss'}})-[r]-(b) RETURN type(r), b.name
+        3. **Wildcards**: Use `-[r]-` (undirected) to find all possible connections if the specific relationship type is unknown.
+        4. To find entities with messy names, use the full-text index:
+            CALL db.index.fulltext.queryNodes('entity_names', 'Adventurers Guild') 
+            YIELD node, score 
+            RETURN node.name
+        5. Examples: 
+        Question: Who is in the Adventurers' Guild?
+        Cypher: MATCH (m:Entity)-[r]-(g:Entity) WHERE g.name =~ '(?i).*Adventurer.*Guild.*' RETURN m.name, type(r)
+
+        Question: What are the Adepti?
+        Cypher: MATCH (e:Entity) WHERE e.name = 'Adepti' OR e.label = 'Adepti' RETURN e.name, e.aliases
         
         CRITICAL:
-        - Generate ONLY ONE single Cypher query.
-        - Do NOT add comments (//).
-        - Do NOT use markdown (```).
+        - Return ONLY the Cypher query.
+        - Do not add comments.
+        - Combine results into one return statement.
         
         Question: {question}
         Cypher Query:
@@ -57,8 +70,20 @@ class LoreReasoner:
             cypher_prompt=self.cypher_prompt,
             verbose=True,
             allow_dangerous_requests=True,
-            return_direct=False 
+            return_direct=False,
+            top_k=50
         )
+
+    def get_dynamic_schema(self):
+        # This query fetches all unique relationship types actually in your DB
+        result = self.graph.query("CALL db.relationshipTypes()")
+        rel_types = [row['relationshipType'] for row in result]
+        
+        # This fetches all property keys (like 'name', 'aliases', 'label')
+        props = self.graph.query("CALL db.propertyKeys()")
+        prop_keys = [row['propertyKey'] for row in props]
+
+        return f"Existing Relationships: {rel_types}\nAvailable Properties: {prop_keys}"
 
     def ask(self, question):
         try:
@@ -73,4 +98,4 @@ if __name__ == "__main__":
     bot = LoreReasoner()
     
     # 2. Test "Connection" logic
-    print(bot.ask("What is the connections between the Abyss and the World Tree?"))
+    print(bot.ask("Is Eight Adepts an organization or an individual?"))
