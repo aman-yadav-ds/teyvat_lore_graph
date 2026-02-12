@@ -5,11 +5,14 @@ import glob
 import re
 from langchain_ollama import ChatOllama # CHANGED: Switched from Google to Ollama
 from src.utils.neo4j_client import Neo4jClient
+from src.utils.entity_resolver import EntityResolver
 
 class LoreExtractor:
     def __init__(self):
         self.db = Neo4jClient()
         self.db.connect()
+
+        self.entity_resolver = EntityResolver()
         
         # CHANGED: Initialize Local LLM
         # "format": "json" is CRITICAL. It forces the model to only output valid JSON.
@@ -49,13 +52,13 @@ class LoreExtractor:
 
                 for i, chunk in enumerate(chunks):
                     print(f"   🤖 Processing chunk {i+1}/{len(chunks)}...")
-                    self.extract_and_upload(chunk, source_file=filename)
+                    self.extract_and_upload(chunk, chunk_index=i, source_file=filename)
                     # No time.sleep() needed! You own the hardware.
 
             except Exception as e:
                 print(f"   ❌ Error processing {filename}: {e}")
 
-    def extract_and_upload(self, text, source_file="Unknown"):
+    def extract_and_upload(self, text, chunk_index=0, source_file="Unknown"):
         # SIMPLIFIED PROMPT: Smaller models need less "fluff" and more concrete examples.
         prompt = f"""
         Extract Genshin Impact lore entities and relationships from the text below.
@@ -86,15 +89,29 @@ class LoreExtractor:
             clean_content = self.clean_json_string(response.content)
             data = json.loads(clean_content)
 
+            os.makedirs("data/processed", exist_ok=True)
+            json.dump(data, open(f"data/processed/{source_file.replace('.txt', '')}_{chunk_index}.json", "w", encoding="utf-8"), indent=2, ensure_ascii=False)
+
             # 1. Upload Entities
             count_ent = 0
             for entity in data.get('entities', []):
-                if not entity.get('canonical_name'): continue
+                original_name = entity.get('canonical_name', "")
+
+                resolved_name = self.entity_resolver.resolve_name(original_name)
+
+                if resolved_name != original_name:
+                    print(f"      🔍 Resolved '{original_name}' to '{resolved_name}'")
+                    entity['canonical_name'] = resolved_name
                 
                 entity_cypher = """
                 MERGE (e:Entity {name: $canonical_name})
-                ON CREATE SET e.aliases = $aliases, e.label = $label, e.source_file = $source
-                ON MATCH SET e.aliases = apoc.coll.toSet(e.aliases + $aliases)
+                ON CREATE SET
+                    e.aliases = $aliases,
+                    e.label = $label,
+                    e.source_file = $source
+                ON MATCH SET
+                    e.aliases = apoc.coll.toSet(coalesce(e.aliases, []) + coalesce($aliases, []))
+
                 """
                 entity['source'] = source_file
                 self.db.query(entity_cypher, parameters=entity)
@@ -104,10 +121,14 @@ class LoreExtractor:
             count_rel = 0
             for rel in data.get('relationships', []):
                 if not rel.get('source') or not rel.get('target'): continue
+                if not re.match(r'^[A-Z_]+$', rel['type']): continue
                 
+                rel['source'] = self.entity_resolver.resolve_name(rel['source'])
+                rel['type'] = self.entity_resolver.resolve_name(rel['type'])
+
                 rel_cypher = f"""
-                MATCH (a:Entity {{name: $source}})
-                MATCH (b:Entity {{name: $target}})
+                MERGE (a:Entity {{name: $source}})
+                MERGE (b:Entity {{name: $target}})
                 MERGE (a)-[:{rel['type']}]->(b)
                 """
                 self.db.query(rel_cypher, parameters=rel)
