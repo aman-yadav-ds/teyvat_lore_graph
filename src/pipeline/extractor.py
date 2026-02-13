@@ -79,6 +79,9 @@ class LoreExtractor:
         1. Use 'ANCESTOR_OF' (Active voice) instead of 'DESCENDED_FROM'.
         2. Use 'WORSHIPS' (Active voice) instead of 'WORSHIPPED_BY'.
         3. If you see [TABLE_DATA], extract the rows as facts.
+        4. Only include entities and relationships that are explicitly supported by the text. No speculation!
+        5. Ensure all entity names are consistent and resolve to a single canonical name when possible.
+        6. Ensure the relationships points to target entities that are actually mentioned in the text.
 
         Text:
         {text}
@@ -124,7 +127,7 @@ class LoreExtractor:
                 if not re.match(r'^[A-Z_]+$', rel['type']): continue
                 
                 rel['source'] = self.entity_resolver.resolve_name(rel['source'])
-                rel['type'] = self.entity_resolver.resolve_name(rel['type'])
+                rel['target'] = self.entity_resolver.resolve_name(rel['target'])
 
                 rel_cypher = f"""
                 MERGE (a:Entity {{name: $source}})

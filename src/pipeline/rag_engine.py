@@ -98,4 +98,4 @@ if __name__ == "__main__":
     bot = LoreReasoner()
     
     # 2. Test "Connection" logic
-    print(bot.ask("Is Eight Adepts an organization or an individual?"))
+    print(bot.ask("Who is Vedrfolnir?"))
